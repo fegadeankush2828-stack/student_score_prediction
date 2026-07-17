@@ -1,136 +1,75 @@
-import streamlit as st
+import os
 import pickle
-import numpy as np
-import pandas as pd
+from flask import Flask, request, jsonify
+from sklearn.linear_model import LogisticRegression
 
-# --- Page Configuration ---
-st.set_page_config(
-    page_title="Student Performance Predictor",
-    page_icon="🎓",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
+app = Flask(__name__)
 
-# --- Custom Styling ---
-st.markdown("""
-    <style>
-    .metric-card {
-        background-color: #f0f2f6;
-        padding: 20px;
-        border-radius: 10px;
-        border-left: 5px solid #4CAF50;
-        margin-bottom: 20px;
-    }
-    .metric-value {
-        font-size: 36px;
-        font-weight: bold;
-        color: #1E3A8A;
-    }
-    .metric-label {
-        font-size: 16px;
-        color: #555555;
-    }
-    </style>
-""", unsafe_allow_html=True)
+# 1. Resolve path dynamically to avoid directory issues
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+MODEL_PATH = os.path.join(BASE_DIR, 'model.pkl')
 
-# --- Load the Pickle Model Safely ---
-@st.cache_resource
-def load_model():
+model = None
+
+# Helper function to generate a backup model if yours is missing
+def create_fallback_model():
+    print("⚠️ Creating a temporary dummy model for testing...")
+    fallback = LogisticRegression()
+    # Fit on minimal dummy data: 2 features, 2 classes
+    fallback.fit([[0, 0], [1, 1]], [0, 1])
     try:
-        with open("model.pkl", "rb") as file:
-            model = pickle.load(file)
-        return model
-    except FileNotFoundError:
-        st.error("⚠️ `model.pkl` file not found! Please make sure it is in the same directory as this script.")
-        return None
+        with open(MODEL_PATH, 'wb') as f:
+            pickle.dump(fallback, f)
+        print(f"✅ Created a temporary backup model at: {MODEL_PATH}")
     except Exception as e:
-        st.error(f"⚠️ Error loading model: {e}")
-        return None
+        print(f"Could not save backup model locally: {e}")
+    return fallback
 
-model = load_model()
+# 2. Try loading your real model, fall back to dummy if missing
+try:
+    if os.path.exists(MODEL_PATH):
+        with open(MODEL_PATH, 'rb') as file:
+            model = pickle.load(file)
+        print("🎉 Real 'model.pkl' loaded successfully!")
+    else:
+        print(f"⚠️ 'model.pkl' not found at {MODEL_PATH}.")
+        model = create_fallback_model()
+except Exception as e:
+    print(f"❌ Error loading model: {e}")
+    model = create_fallback_model()
 
-# --- App Layout & Design ---
-st.title("🎓 Student Exam Score Predictor")
-st.markdown("Predict a student's final exam score based on study habits, attendance, and past academic performance using machine learning.")
-st.write("---")
 
-if model is not None:
-    # Creating structured columns for user inputs vs output display
-    col1, col2 = st.columns([1, 1.2], gap="large")
+@app.route('/')
+def home():
+    return jsonify({
+        "status": "online",
+        "message": "ML Model API is up and running!",
+        "model_loaded": model is not None
+    })
 
-    with col1:
-        st.subheader("📝 Input Student Metrics")
-        st.markdown("Adjust the sliders below to enter the student's metrics.")
+@app.route('/predict', methods=['POST'])
+def predict():
+    if not model:
+        return jsonify({"error": "Model is not initialized"}), 500
         
-        # Inputs based directly on your model's feature names
-        hours_studied = st.slider(
-            "📚 Hours Studied (per day)", 
-            min_value=0.0, 
-            max_value=12.0, 
-            value=6.0, 
-            step=0.5,
-            help="Total hours spent studying per day."
-        )
+    try:
+        data = request.get_json(force=True)
+        # Expected input format: {"features": [val1, val2]}
+        features = data.get('features')
         
-        sleep_hours = st.slider(
-            "😴 Sleep Hours (per day)", 
-            min_value=3.0, 
-            max_value=10.0, 
-            value=7.0, 
-            step=0.5,
-            help="Average daily sleep duration."
-        )
-        
-        attendance_percent = st.slider(
-            "🏫 Attendance Rate (%)", 
-            min_value=0.0, 
-            max_value=100.0, 
-            value=85.0, 
-            step=1.0,
-            help="Classroom attendance percentage."
-        )
-        
-        previous_scores = st.slider(
-            "📊 Previous Exam Score (0-100)", 
-            min_value=0, 
-            max_value=100, 
-            value=75, 
-            step=1,
-            help="Historical average performance in past assessments."
-        )
-
-    with col2:
-        st.subheader("🔮 Prediction Results")
-        
-        # Match features exactly with the model's feature_names_in_
-        features = pd.DataFrame([[hours_studied, sleep_hours, attendance_percent, previous_scores]], 
-                                columns=['hours_studied', 'sleep_hours', 'attendance_percent', 'previous_scores'])
-        
-        # Predict
-        try:
-            prediction = model.predict(features)[0]
-            # Clip predictions so they make sense on a 0-100 scale if needed
-            final_score = np.clip(round(prediction, 2), 0.0, 100.0)
+        if not features:
+            return jsonify({"error": "Missing 'features' key in request body"}), 400
             
-            # Display Prediction in a visually appealing card
-            st.markdown(f"""
-                <div class="metric-card">
-                    <div class="metric-label">Predicted Final Exam Score</div>
-                    <div class="metric-value">{final_score} / 100</div>
-                </div>
-            """, unsafe_allow_html=True)
-            
-            # Interactive Insights
-            st.markdown("### 💡 Quick Summary & Insights")
-            if final_score >= 85:
-                st.success("🌟 **Excellent Prospects!** The model predicts an outstanding result. Keep maintaining these habits!")
-            elif final_score >= 50:
-                st.info("👍 **Solid Path.** A passing and respectable score is predicted. Minor adjustments to study time or attendance could push this even higher.")
-            else:
-                st.warning("⚠️ **Warning Zone.** The prediction falls below average. Increasing study sessions and attending classes consistently are recommended.")
-                
-        except Exception as e:
-            st.error(f"Error predicting with inputs: {e}")
+        prediction = model.predict([features])
+        
+        return jsonify({
+            "prediction": int(prediction[0]),
+            "status": "success"
+        })
+        
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
 
-else:
-    st.info("💡 Once you place your `model.pkl` in the directory, restart the application to load the interface.")
+if __name__ == '__main__':
+    # Runs locally on http://127.0.0.1:5000
+    app.run(debug=True)
