@@ -4,7 +4,7 @@ import numpy as np
 
 
 # Load trained model
-model = pickle.load(open("model.pkl", "wb"))
+model = pickle.load(open("model.pkl", "rb"))
 
 
 # Page title
