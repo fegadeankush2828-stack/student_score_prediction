@@ -1,11 +1,17 @@
-import streamlit as st
+import pandas as pd
+from sklearn.linear_model import LinearRegression
 import pickle
-import numpy as np
 
+df = pd.read_csv("student_scores.csv")
 
-# Load trained model
-with open("model.pkl", "rb") as file:
-    model = pickle.load(file)
+X = df[["Hours"]]
+y = df["Scores"]
+
+model = LinearRegression()
+model.fit(X, y)
+
+with open("model.pkl","wb") as f:
+    pickle.dump(model,f)
 
 
 # Page title
